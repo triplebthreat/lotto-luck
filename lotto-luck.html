@@ -3677,19 +3677,23 @@ function rollWeaponAttack(slotKey) {
   if (!w.dice) { showRes('weapon-'+slotKey, `<div class="small-text">Couldn't read this weapon's damage dice.</div>`); return; }
 
   const scores = activeMeta?.abilityScores || {str:10,dex:10,con:10,int:10,wis:10,cha:10};
-  const strMod = MOD(scores.str), dexMod = MOD(scores.dex);
+  const strMod = effMod('str'), dexMod = effMod('dex');
   const abilityMod = w.ranged ? dexMod : (w.finesse ? Math.max(strMod, dexMod) : strMod);
   const proficient = isProficientWithWeapon(activeMeta, weaponName);
   const profBonus = proficient ? PROF_BONUS(activeMeta?.level || 1) : 0;
   const hadGuidedStrike = !!state.guidedStrike;
   if (hadGuidedStrike) { state.guidedStrike = false; saveCharState(); }
-  const sacredWeaponBonus = state.sacredWeaponActive ? MOD(scores.cha) : 0;
+  const sacredWeaponBonus = state.sacredWeaponActive ? effMod('cha') : 0;
   // Fighting Styles
   const style = activeMeta?.fightingStyle || '';
   const archeryBonus = (style === 'Archery' && w.ranged) ? 2 : 0;
-  const atkBonus = abilityMod + profBonus + (hadGuidedStrike ? 10 : 0) + sacredWeaponBonus + archeryBonus;
-  let dmgMod = slotKey === 'off' ? 0 : abilityMod; // off-hand: no ability mod to damage by default
-  if (slotKey === 'off' && style === 'Two-Weapon Fighting') dmgMod = abilityMod;
+  // Generic item bonuses: +Attack Rolls applies to the to-hit roll, +Damage Rolls to the damage roll
+  const itemTotals = itemBonusTotals();
+  const itemAtkBonus = itemTotals['attack'] || 0;
+  const itemDmgBonus = itemTotals['damage'] || 0;
+  const atkBonus = abilityMod + profBonus + (hadGuidedStrike ? 10 : 0) + sacredWeaponBonus + archeryBonus + itemAtkBonus;
+  let dmgMod = (slotKey === 'off' ? 0 : abilityMod) + itemDmgBonus; // off-hand: no ability mod to damage by default
+  if (slotKey === 'off' && style === 'Two-Weapon Fighting') dmgMod = abilityMod + itemDmgBonus;
   // Dueling: one-handed melee weapon in main hand, no weapon in the other hand
   const isTwoHanded = /Two-Handed/i.test(item.note);
   const offItem = (state.equipSlots||{}).off ? SRD_ITEMS.find(i => i.name === state.equipSlots.off && i.cat === 'Weapon') : null;
@@ -3848,7 +3852,7 @@ function renderGenericSpells() {
   if (!activeMeta) return;
   const spells = spellsForCharacter(activeMeta);
   const abil = spellcastingAbilityFor(activeMeta);
-  const abilMod = MOD((activeMeta.abilityScores||{})[abil] ?? 10);
+  const abilMod = effMod(abil);
   const prof = PROF_BONUS(activeMeta.level || 1);
   const dc = 8 + abilMod + prof;
   const hasRealSlots = !!slotTableForClass(activeMeta.class, activeMeta.ruleset);
@@ -3926,7 +3930,7 @@ function castGenericSpell(id, castLevel) {
     }
   }
 
-  const abilMod = MOD((activeMeta.abilityScores||{})[spellcastingAbilityFor(activeMeta)] ?? 10);
+  const abilMod = effMod(spellcastingAbilityFor(activeMeta));
   const prof = PROF_BONUS(activeMeta.level || 1);
   const lvl = activeMeta.level || 1;
   const itemBonus = spellItemBonus();
@@ -4074,7 +4078,7 @@ function castGenericDamage(id, count, isCrit, upcastSteps) {
   const perHitCount = baseCount * (isCrit ? 2 : 1), sides = parseInt(m[2]);
   const totalRolls = perHitCount * count;
   const rolls = Array.from({length:totalRolls}, () => d(sides));
-  const abilBonus = s.addAbilToDmg ? MOD((activeMeta.abilityScores||{})[(CLASS_CONFIG[activeMeta.class]||{}).spellcasting] ?? 10) : 0;
+  const abilBonus = (s.addAbilToDmg ? effMod((CLASS_CONFIG[activeMeta.class]||{}).spellcasting) : 0) + (itemBonusTotals()['damage'] || 0);
 
   animateDiceRow(rolls.map(r=>({val:r,label:`d${sides}`,sides})), color).then(() => {
     const total = rolls.reduce((a,b)=>a+b,0) + abilBonus;
@@ -4595,10 +4599,11 @@ function renderSkillsAndSaves() {
   const savesProf = (cls.saves || []).map(s => s.toLowerCase());
   const skillProfList = getSkillProficiencies(activeMeta).map(s => s.toLowerCase());
 
+  const saveItemBonus = itemBonusTotals()['save'] || 0;
   const abilities = [['str','Strength'],['dex','Dexterity'],['con','Constitution'],['int','Intelligence'],['wis','Wisdom'],['cha','Charisma']];
   savesEl.innerHTML = abilities.map(([key,label]) => {
     const isProf = savesProf.includes(key);
-    const mod = MOD(scores[key]) + (isProf ? prof : 0);
+    const mod = effMod(key) + (isProf ? prof : 0) + saveItemBonus;
     const modStr = mod>=0?`+${mod}`:String(mod);
     return `<div class="prof-item rollable" onclick="rollCheck('${label} Save',${mod})"><div class="prof-dot ${isProf?'full':''}"></div><span class="prof-mod">${modStr}</span><span>${label}${isProf?' ★':''}</span><span class="roll-d20-hint">🎲</span></div>`;
   }).join('');
@@ -4609,7 +4614,7 @@ function renderSkillsAndSaves() {
     const ability = SKILL_ABILITY[s] || 'str';
     const isProf = skillProfList.includes(label.toLowerCase());
     const isExpert = isProf && expertiseList.includes(label.toLowerCase());
-    const mod = MOD(scores[ability]) + (isExpert ? prof*2 : isProf ? prof : 0);
+    const mod = effMod(ability) + (isExpert ? prof*2 : isProf ? prof : 0);
     const modStr = mod>=0?`+${mod}`:String(mod);
     return `<div class="prof-item rollable" onclick="rollCheck('${label} (${ability.toUpperCase()})',${mod})"><div class="prof-dot ${isProf?'full':''}"></div><span class="prof-mod">${modStr}</span><span>${label} (${ability.toUpperCase()})${isExpert?' ★★':isProf?' ★':''}</span><span class="roll-d20-hint">🎲</span></div>`;
   }).join('');
@@ -4622,7 +4627,7 @@ function renderSkillsAndSaves() {
   if (quickSaves) {
     quickSaves.innerHTML = '<span class="small-text">Saves:</span>' + abilities.map(([key]) => {
       const isProf = savesProf.includes(key);
-      const mod = MOD(scores[key]) + (isProf ? prof : 0);
+      const mod = effMod(key) + (isProf ? prof : 0) + saveItemBonus;
       const modStr = mod>=0?`+${mod}`:String(mod);
       return `<button class="btn btn-xs" onclick="rollSave('${key.toUpperCase()}',${mod})">${key.toUpperCase()}${modStr}${isProf?'★':''}</button>`;
     }).join('');
@@ -4633,29 +4638,32 @@ function renderAbilityScores() {
   if (!activeMeta) return;
   const scores = activeMeta.abilityScores || {str:10,dex:10,con:10,int:10,wis:10,cha:10};
   const ABIL_FULL = { str:'Strength', dex:'Dexterity', con:'Constitution', int:'Intelligence', wis:'Wisdom', cha:'Charisma' };
+  const itemAbilBonuses = itemBonusTotals();
   document.querySelectorAll('.stat-box').forEach(box => {
     const lbl = box.querySelector('.stat-label')?.textContent?.toLowerCase();
     if (!lbl || !(lbl in scores)) return;
-    const mod = MOD(scores[lbl]);
+    const effScore = effAbilityScore(lbl);
+    const mod = MOD(effScore);
+    const bonus = itemAbilBonuses[lbl] || 0;
     const scoreEl = box.querySelector('.stat-score');
     const modEl = box.querySelector('.stat-mod');
-    if (scoreEl) scoreEl.textContent = scores[lbl];
+    if (scoreEl) scoreEl.textContent = effScore + (bonus ? ` (${scores[lbl]}${bonus>=0?'+':''}${bonus})` : '');
     if (modEl) modEl.textContent = (mod>=0?'+':'')+mod;
     // Click an ability score to roll a d20 ability check with its modifier
     box.style.cursor = 'pointer';
-    box.title = `Roll ${ABIL_FULL[lbl]} check (d20 ${(mod>=0?'+':'')+mod})`;
+    box.title = `Roll ${ABIL_FULL[lbl]} check (d20 ${(mod>=0?'+':'')+mod})${bonus?` — includes ${bonus>=0?'+':''}${bonus} from an item`:''}`;
     box.onclick = () => rollCheck(`${ABIL_FULL[lbl]} Check`, mod);
   });
 
-  // Initiative = DEX modifier (+5 if the character has the Alert feat — 2024 backgrounds, or the Criminal/Guard origin feat)
+  // Initiative = DEX modifier (+5 if the character has the Alert feat — 2024 backgrounds, or the Criminal/Guard origin feat) + any item initiative bonus
   const bg = (activeMeta.ruleset === '2024' ? BACKGROUND_CONFIG_2024 : null)?.[activeMeta.background];
   const hasAlert = bg?.feat === 'Alert' || (activeMeta.feats || []).includes('Alert');
-  const initiative = MOD(scores.dex) + (hasAlert ? 5 : 0);
+  const initiative = effMod('dex') + (hasAlert ? 5 : 0) + (itemAbilBonuses['initiative'] || 0);
   // Derive prof-dependent combat stats from the CURRENT level on every render — these are static
   // HTML otherwise and would go stale after a level-up + reload.
   const profNow = PROF_BONUS(activeMeta.level || 1);
   const castAbil = spellcastingAbilityFor(activeMeta);
-  const castMod = castAbil ? MOD(scores[castAbil] ?? 10) : null;
+  const castMod = castAbil ? effMod(castAbil) : null;
   const { atk: itemAtk, dc: itemDc } = spellItemBonus();
   document.querySelectorAll('.combat-stat').forEach(cs => {
     const lbl = cs.querySelector('.label')?.textContent;
@@ -4674,10 +4682,9 @@ function renderAbilityScores() {
 // Roll initiative and push it to the DM's tracker (members/{uid}.initiative)
 function rollInitiative() {
   if (!activeMeta) return;
-  const scores = activeMeta.abilityScores || {dex:10};
   const bg = (activeMeta.ruleset === '2024' ? BACKGROUND_CONFIG_2024 : null)?.[activeMeta.background];
   const hasAlert = bg?.feat === 'Alert' || (activeMeta.feats || []).includes('Alert');
-  const mod = MOD(scores.dex) + (hasAlert ? 5 : 0);
+  const mod = effMod('dex') + (hasAlert ? 5 : 0) + (itemBonusTotals()['initiative'] || 0);
   const roll = d(20), total = roll + mod;
   state.lastInitiative = total;
   state.lastInitiativeAt = Date.now();
@@ -6398,7 +6405,7 @@ function parseArmorNote(note) {
   return { base: parseInt(m[1]), addDex: !!m[2], dexCap: m[3] ? parseInt(m[3]) : null };
 }
 function computeBaseAC() {
-  const dexMod = MOD((activeMeta?.abilityScores||{}).dex ?? 10);
+  const dexMod = effMod('dex');
   const chestName = (state.equipSlots||{}).chest;
   const chestItem = chestName ? SRD_ITEMS.find(i => i.name === chestName && i.cat === 'Armor') : null;
   const armor = chestItem ? parseArmorNote(chestItem.note) : null;
@@ -6412,6 +6419,16 @@ function computeBaseAC() {
   return ac;
 }
 // Tally equipped item bonuses by type (used both for the displayed stat block and real dice rolls)
+// Item bonuses to a raw ability score (Belt of Giant Strength, Headband of Intellect, etc.) flow
+// into EVERYTHING derived from that score — checks, saves, spell attack/DC, weapon attacks, AC,
+// initiative — same as real 5e. Use these instead of raw MOD(scores[key]) anywhere a roll or
+// display depends on an ability modifier.
+function effAbilityScore(key) {
+  const base = (activeMeta?.abilityScores || {})[key] ?? 10;
+  return base + (itemBonusTotals()[key] || 0);
+}
+function effMod(key) { return MOD(effAbilityScore(key)); }
+
 function itemBonusTotals() {
   const totals = {};
   Object.values(state.itemBonuses || {}).forEach(b => { totals[b.type] = (totals[b.type]||0) + b.val; });
@@ -6436,7 +6453,7 @@ function applyItemBonuses() {
   // Spell attack / DC (casters only — uses the character's actual spellcasting ability)
   const cls = CLASS_CONFIG[activeMeta?.class] || {};
   if (cls.spellcasting) {
-    const abilMod = MOD((activeMeta?.abilityScores||{})[cls.spellcasting] ?? 10);
+    const abilMod = effMod(cls.spellcasting);
     const prof = PROF_BONUS(activeMeta?.level || 1);
     const { atk: spellAtkBonus, dc: dcBonus } = spellItemBonus();
     document.querySelectorAll('.combat-stat').forEach(cs => {
@@ -7337,7 +7354,7 @@ function buildLevelUpModal(toLv) {
   let autoHTML = '<div class="lu-auto-grid">';
   if(profChanged) autoHTML += `<div class="lu-auto-item"><span class="lu-label">Proficiency</span><span class="lu-val">+${oldProf} → <strong>+${newProf}</strong></span></div>`;
   if(profChanged && cls.spellcasting) {
-    const abilMod = MOD((activeMeta?.abilityScores||{})[cls.spellcasting] ?? 10);
+    const abilMod = effMod(cls.spellcasting);
     const newSpellAtk = abilMod + newProf, oldSpellAtk = abilMod + oldProf, newDC = 8 + abilMod + newProf, oldDC = 8 + abilMod + oldProf;
     autoHTML += `<div class="lu-auto-item"><span class="lu-label">Spell Attack</span><span class="lu-val">+${oldSpellAtk} → <strong>+${newSpellAtk}</strong></span></div>`;
     autoHTML += `<div class="lu-auto-item"><span class="lu-label">Spell Save DC</span><span class="lu-val">${oldDC} → <strong>${newDC}</strong></span></div>`;
@@ -7694,7 +7711,7 @@ function syncLevelUpUI(toLv, fromLv) {
 
   // Spell Atk / Spell DC combat stats (only meaningful for casters)
   if (cls.spellcasting) {
-    const abilMod = MOD((activeMeta?.abilityScores||{})[cls.spellcasting] ?? 10);
+    const abilMod = effMod(cls.spellcasting);
     const { atk: itemAtk, dc: itemDc } = spellItemBonus();
     document.querySelectorAll('.combat-stat').forEach(cs => {
       const lbl = cs.querySelector('.label')?.textContent;
@@ -7892,7 +7909,7 @@ function castFireBolt() {
   const rd = rollD20WithMode(mode);
   const atkRoll = rd.final;
   // Live spell attack bonus: CHA + proficiency + item bonuses (e.g. +1 Magic Staff)
-  const atkBonus = MOD((activeMeta?.abilityScores||{}).cha ?? 18) + PROF_BONUS(state.level) + spellItemBonus().atk;
+  const atkBonus = effMod('cha') + PROF_BONUS(state.level) + spellItemBonus().atk;
   const atkTotal = atkRoll + atkBonus;
   const isCrit = atkRoll === 20, isMiss = atkRoll === 1 && mode !== 'adv';
   const color = SPELL_COLORS.fire;
@@ -7932,10 +7949,11 @@ function castFireBoltDamage(isCrit) {
   const lvl = _cast.level || state.level;
   const numDice = lvl >= 17 ? 4 : lvl >= 11 ? 3 : lvl >= 5 ? 2 : 1;
   const rolls = Array.from({length: isCrit ? numDice*2 : numDice}, () => d(10));
-  const total = rolls.reduce((a,b)=>a+b,0);
+  const itemDmg = itemBonusTotals()['damage'] || 0;
+  const total = rolls.reduce((a,b)=>a+b,0) + itemDmg;
 
   animateDiceRow(rolls.map((v,i)=>({val:v, label:`d10`, sides:10})), color).then(() => {
-    document.getElementById('cast-result-line').textContent = `[${rolls.join(' + ')}]`;
+    document.getElementById('cast-result-line').textContent = `[${rolls.join(' + ')}]${itemDmg?` + ${itemDmg}`:''}`;
     showCastTotal(`${total} 🔥`, 'fire damage');
     setCastActions(`<button class="cast-btn-done" onclick="closeCastModal()">Done</button>`);
     showRes('firebolt', `<div class="roll-label">Fire Bolt · Cantrip</div><div class="roll-dice">Attack <strong>${_cast.atkTotal}</strong> ✓ Hit · Damage <strong>${total}</strong> 🔥 fire</div>`);
@@ -7954,7 +7972,7 @@ function castChaosBolt(level, isReroll) {
   if(!isReroll && !useSlot(level)){showRes('chaosbolt',noSlotHTML(SLOT_NAMES[level-1]));return;}
   const { mode, source } = consumeRollMode();
   const rd = rollD20WithMode(mode);
-  const atkBonus = MOD((activeMeta?.abilityScores||{}).cha ?? 18) + PROF_BONUS(state.level) + spellItemBonus().atk;
+  const atkBonus = effMod('cha') + PROF_BONUS(state.level) + spellItemBonus().atk;
   const atkRoll = rd.final, atkTotal = atkRoll + atkBonus;
   const isCrit = atkRoll === 20, isMiss = atkRoll === 1 && mode !== 'adv';
   const color = SPELL_COLORS.chaos;
@@ -8023,7 +8041,7 @@ function renderLottoExtraSpells() {
 function castFireball() {
   if(!useSlot(3)){showRes('fireball',noSlotHTML('3rd'));return;}
   const color = SPELL_COLORS.fire;
-  const chaMod = MOD((activeMeta?.abilityScores||{}).cha ?? 18);
+  const chaMod = effMod('cha');
   const dc = 8 + PROF_BONUS(state.level) + chaMod + spellItemBonus().dc;
 
   openCastModal(color);
@@ -8032,9 +8050,10 @@ function castFireball() {
   document.getElementById('cast-phase-label').textContent = 'DAMAGE ROLL';
 
   const rolls = Array.from({length:8}, () => d(6));
-  const total = rolls.reduce((a,b)=>a+b,0);
+  const itemDmg = itemBonusTotals()['damage'] || 0;
+  const total = rolls.reduce((a,b)=>a+b,0) + itemDmg;
   animateDiceRow(rolls.map(v=>({val:v, label:'d6', sides:6})), color).then(() => {
-    document.getElementById('cast-result-line').textContent = `[${rolls.join(', ')}]`;
+    document.getElementById('cast-result-line').textContent = `[${rolls.join(', ')}]${itemDmg?` + ${itemDmg}`:''}`;
     showCastTotal(`${total} 🔥`, `fire damage · DC ${dc} DEX save for half`);
     setCastActions(`<button class="cast-btn-done" onclick="closeCastModal()">Done</button>`);
     showRes('fireball', `<div class="roll-label">Fireball · 3rd Level Slot Used</div><div class="roll-dice"><strong>${total}</strong> 🔥 fire · DEX save DC <strong>${dc}</strong> for half</div>`);
@@ -8076,7 +8095,7 @@ function castChaosBoltDamage() {
     const typeA = dmgTypes[da], typeB = dmgTypes[db];
     const clrA = SPELL_COLORS[(typeA||'').toLowerCase()] || '#c9a227';
     const clrB = SPELL_COLORS[(typeB||'').toLowerCase()] || '#c9a227';
-    const totalA = d8rolls.reduce((a,b)=>a+b,0) + d6sum;
+    const totalA = d8rolls.reduce((a,b)=>a+b,0) + d6sum + (itemBonusTotals()['damage'] || 0);
 
     if(da === db) {
       setCastActions(`
