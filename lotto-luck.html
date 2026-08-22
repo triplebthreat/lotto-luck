@@ -2521,7 +2521,6 @@ var SPELL_LIBRARY = {
   heat_metal:      { name:'Heat Metal', icon:'🔨', level:2, classes:['bard','druid'], type:'save', saveAbility:'con', dmgDice:'2d8', dmgType:'fire', action:'Action', range:'60ft', desc:'Choose a metal object; CON save or 2d8 fire damage (half on success). Bonus action each turn to repeat. Concentration, 1 minute.' },
   shatter_spell:   { name:'Shatter', icon:'💎', level:2, classes:['bard','wizard','sorcerer'], type:'save', saveAbility:'con', dmgDice:'3d8', dmgType:'thunder', action:'Action', range:'60ft', desc:'10ft radius. CON save or take thunder damage (half on success); nonmagical objects in area take extra force.', upcastDice:1 },
   hypnotic_pattern:{ name:'Hypnotic Pattern', icon:'🌀', level:3, classes:['bard','wizard','sorcerer','warlock'], type:'save', saveAbility:'wis', action:'Action', range:'120ft', desc:'30ft cube of swirling colors. WIS save or be charmed and incapacitated (speed 0) for the duration. Concentration, 1 min.' },
-  fear_spell:      { name:'Fear', icon:'😱', level:3, classes:['bard','wizard','sorcerer'], type:'save', saveAbility:'wis', action:'Action', range:'Self (30ft cone)', desc:'Creatures in the cone make a WIS save or are frightened and must drop what they\'re holding and move away from you each turn. Concentration, 1 min.' },
   tongues_spell:   { name:'Tongues', icon:'🗣️', level:3, classes:['bard','cleric','warlock','wizard','sorcerer'], type:'utility', action:'Action', range:'Touch', desc:'Target understands and speaks any language for 1 hour.' },
 
   // ---- PALADIN (CHA, half-caster) ----
@@ -2531,7 +2530,6 @@ var SPELL_LIBRARY = {
   lesser_restoration:{ name:'Lesser Restoration', icon:'➕', level:2, classes:['paladin','cleric','druid','bard','ranger'], type:'utility', action:'Action', range:'Touch', desc:'End one disease or condition on the target: blinded, deafened, paralyzed, or poisoned.' },
 
   // ---- RANGER (WIS, half-caster) ----
-  hunters_mark:    { name:"Hunter's Mark", icon:'🎯', level:1, classes:['ranger'], type:'buff', action:'Bonus', range:'90ft', desc:'Marked target takes +1d6 damage from your weapon attacks. Lasts 1 hour (Concentration).' },
   goodberry:       { name:'Goodberry', icon:'🫐', level:1, classes:['ranger','druid'], type:'utility', action:'Action', range:'Touch', desc:'Creates 10 berries; each restores 1 HP and counts as a meal. Lasts 24 hours.' },
   speak_with_animals:{ name:'Speak with Animals', icon:'🐾', level:1, classes:['ranger','druid','bard'], type:'utility', action:'Action', range:'Self', desc:'Understand and communicate with beasts for 10 minutes (ritual).' },
   pass_without_trace:{ name:'Pass without Trace', icon:'🌫️', level:2, classes:['ranger','druid'], type:'buff', action:'Action', range:'Self (30ft)', desc:'Allies within 30ft gain +10 to Stealth checks and leave no trail, for 1 hour (Concentration).' },
@@ -2745,18 +2743,38 @@ function spellPickerSelections() {
     spells:   cbs.filter(b => b.dataset.kind === 'spell').map(b => b.value),
   };
 }
+// Known casters (bard/sorcerer/warlock/ranger) keep a fixed list — real 5e only lets them swap 1
+// spell (and separately, 1 cantrip) per level-up, never freely re-pick the whole thing. Prepared
+// casters (cleric/druid/wizard/paladin) CAN swap their entire list on a long rest, so this only
+// applies to known types. Counted here so the picker shows it live, enforced for real in saveSpellPicks.
+function swapCountsFor(info, sel) {
+  if (!activeMeta || info.type !== 'known' || !activeMeta.spellPicks) return null;
+  const oldSpells = activeMeta.spellPicks.spells || [];
+  const oldCantrips = activeMeta.spellPicks.cantrips || [];
+  return {
+    spellsRemoved: oldSpells.filter(id => !sel.spells.includes(id)).length,
+    cantripsRemoved: oldCantrips.filter(id => !sel.cantrips.includes(id)).length,
+  };
+}
 function updateSpellPickerCounts() {
   const info = casterPrepInfo(activeMeta); if (!info) return;
   const sel = spellPickerSelections();
   const over = sel.cantrips.length > info.cantripMax || sel.spells.length > info.spellMax;
+  const swaps = swapCountsFor(info, sel);
+  const tooManySwaps = swaps && (swaps.spellsRemoved > 1 || swaps.cantripsRemoved > 1);
   const el = document.getElementById('spell-picker-counts');
-  el.innerHTML = `Cantrips: <strong style="color:${sel.cantrips.length>info.cantripMax?'#e05050':'#b07cc6'}">${sel.cantrips.length}/${info.cantripMax}</strong> · Spells: <strong style="color:${sel.spells.length>info.spellMax?'#e05050':'#b07cc6'}">${sel.spells.length}/${info.spellMax}</strong>${over?' — too many!':''}`;
+  let html = `Cantrips: <strong style="color:${sel.cantrips.length>info.cantripMax?'#e05050':'#b07cc6'}">${sel.cantrips.length}/${info.cantripMax}</strong> · Spells: <strong style="color:${sel.spells.length>info.spellMax?'#e05050':'#b07cc6'}">${sel.spells.length}/${info.spellMax}</strong>${over?' — too many!':''}`;
+  if (swaps) html += ` · Swapping out: <strong style="color:${tooManySwaps?'#e05050':'#b07cc6'}">${swaps.spellsRemoved} spell${swaps.cantripsRemoved?`, ${swaps.cantripsRemoved} cantrip`:''}</strong> (max 1 each)${tooManySwaps?' — too many!':''}`;
+  el.innerHTML = html;
 }
 function saveSpellPicks() {
   const info = casterPrepInfo(activeMeta); if (!info) return;
   const sel = spellPickerSelections();
   if (sel.cantrips.length > info.cantripMax) { alert(`Too many cantrips — max ${info.cantripMax}.`); return; }
   if (sel.spells.length > info.spellMax)     { alert(`Too many spells — max ${info.spellMax}.`); return; }
+  const swaps = swapCountsFor(info, sel);
+  if (swaps && swaps.spellsRemoved > 1) { alert(`Known casters can swap at most 1 spell per level-up — you unchecked ${swaps.spellsRemoved}. Re-check ${swaps.spellsRemoved - 1} of your previous spells and keep only 1 swap.`); return; }
+  if (swaps && swaps.cantripsRemoved > 1) { alert(`Known casters can swap at most 1 cantrip per level-up — you unchecked ${swaps.cantripsRemoved}. Re-check ${swaps.cantripsRemoved - 1} of your previous cantrips and keep only 1 swap.`); return; }
   activeMeta.spellPicks = sel;
   saveActiveMeta();
   closeSpellPicker();
@@ -2777,6 +2795,10 @@ var ALL_METAMAGIC_OPTIONS = {
   'Quickened Spell':  { cost:2, desc:'Change a 1-action cast time to a Bonus Action. After casting a leveled spell this way, only cantrips on your action this turn.' },
   'Subtle Spell':     { cost:1, desc:'Cast without verbal or somatic components. Cannot be noticed or countered by Counterspell.' },
   'Twinned Spell':    { cost:'spell level (1 for cantrips)', desc:'Target a second creature with a spell that only targets one creature, if it doesn\'t already affect multiple targets.' },
+  // DM-granted homebrew, not a standard pick — excluded from the normal creation/level-10/17
+  // picker (see renderMetamagicPicker's filter), shown only in the Metamagic card for whoever
+  // actually has it (Lotto). Its real mechanics live in postRollActions()/usePostRollRedirect().
+  'Surprise':         { cost:1, desc:'When a spell misses or a target succeeds its save, redirect it to hit someone else instead — reroll the attack (no new spell slot spent).', homebrew:true },
 };
 function metamagicSlotsForLevel(lvl) { return lvl>=3 ? 2 + (lvl>=10?1:0) + (lvl>=17?1:0) : 0; }
 
@@ -3224,6 +3246,8 @@ function migrateLottoIfNeeded() {
     let changed = false;
     if (!existing.metamagicChoices) { existing.metamagicChoices = ['Quickened Spell','Subtle Spell']; changed = true; }
     if (!existing.ruleset) { existing.ruleset = '2014'; changed = true; }
+    // DM-granted homebrew metamagic — list it alongside her real Metamagic picks
+    if (!existing.metamagicChoices.includes('Surprise')) { existing.metamagicChoices.push('Surprise'); changed = true; }
     if (changed) saveCharsIndex(idx);
     return;
   }
@@ -3239,7 +3263,7 @@ function migrateLottoIfNeeded() {
     level: 4,
     background: 'Charlatan',
     abilityScores: { str:8, dex:14, con:14, int:12, wis:10, cha:18 },
-    metamagicChoices: ['Quickened Spell','Subtle Spell'],
+    metamagicChoices: ['Quickened Spell','Subtle Spell','Surprise'],
   };
   idx.unshift(lottoMeta);
   saveCharsIndex(idx);
@@ -3256,6 +3280,34 @@ function migrateLottoIfNeeded() {
 
 // The active character meta (set on load/switch)
 var activeMeta = null;
+
+// ── High-water mark: a persistent {level, hpMax} record per character, in its own localStorage
+// key so it can't be clobbered by a stale overwrite of the main char-state blob. Only ever moves
+// forward — used to detect and repair exactly that failure mode (see restoreFromHighWaterMark).
+function hwmKey(id) { return 'dnd_char_hwm_' + id; }
+function updateHighWaterMark(id, level, hpMax) {
+  if (!id || !level || !hpMax) return;
+  let hwm = {};
+  try { hwm = JSON.parse(localStorage.getItem(hwmKey(id)) || '{}'); } catch(e) {}
+  const newLevel = Math.max(hwm.level || 0, level);
+  const newHpMax = Math.max(hwm.hpMax || 0, hpMax);
+  if (newLevel !== hwm.level || newHpMax !== hwm.hpMax) {
+    localStorage.setItem(hwmKey(id), JSON.stringify({ level: newLevel, hpMax: newHpMax }));
+  }
+}
+function restoreFromHighWaterMark(id) {
+  let hwm = {};
+  try { hwm = JSON.parse(localStorage.getItem(hwmKey(id)) || '{}'); } catch(e) {}
+  if (!hwm.level || !hwm.hpMax) return;
+  const regressed = (state.level || 1) < hwm.level || (state.hpMax || 0) < hwm.hpMax;
+  if (!regressed) return;
+  const hpMissing = hwm.hpMax - (state.hpMax || 0);
+  state.level = Math.max(state.level || 1, hwm.level);
+  state.hpMax = Math.max(state.hpMax || 0, hwm.hpMax);
+  state.hp = Math.min(state.hpMax, Math.max(0, (state.hp || 0) + Math.max(0, hpMissing)));
+  console.warn(`Character self-repair: level/HP restored to the recorded high-water mark (level ${hwm.level}, ${hwm.hpMax} max HP) — a stale snapshot had reverted them.`);
+  saveCharState();
+}
 
 // Load the active character's meta + state into the live state object
 function loadActiveChar() {
@@ -3278,18 +3330,13 @@ function loadActiveChar() {
       if (hasLuckyFeature() && (!state.lucky || !state.lucky.length)) state.lucky = [true, true, true];
       // Backfill Voluntary Surge charge for saves made before this DM-granted passive was wired up
       if (activeMeta.id === LOTTO_ID && state.surgeCharge === undefined) state.surgeCharge = true;
-      // Self-repair: Lotto's known max HP per level (26 at 4, 32 at 5 — add entries as she levels).
-      // If a stale default snapshot ever overwrites her save with a LOWER max, restore it — current
-      // damage is kept. Values above the table (future level-ups) are never touched.
-      const LOTTO_HPMAX_BY_LEVEL = { 4: 26, 5: 32 };
-      const lottoExpected = LOTTO_HPMAX_BY_LEVEL[state.level];
-      if (activeMeta.id === LOTTO_ID && lottoExpected && state.hpMax < lottoExpected) {
-        const missing = lottoExpected - state.hpMax;
-        state.hpMax = lottoExpected;
-        state.hp = Math.min(lottoExpected, Math.max(0, state.hp + missing));
-        console.warn(`Lotto HP self-repair: max restored to ${lottoExpected} (was overwritten by a stale snapshot).`);
-        saveCharState();
-      }
+      // Self-repair via a persistent high-water mark: the old guard checked "is hpMax right for
+      // state.level" — but a stale full-object overwrite (old tab, race with another session
+      // touching the same file/localStorage) can reset level AND hpMax together, so the level
+      // check quietly agreed with the wrong hpMax and never fired. The high-water mark lives in
+      // its OWN localStorage key, only ever advances (never lowered), and isn't part of the blob
+      // that gets clobbered — so it survives exactly the failure mode that broke the old guard.
+      restoreFromHighWaterMark(activeMeta.id);
       // Level reconciliation: state (snapshot) and meta (chars index) are saved separately, so a
       // level-up that only landed in one must propagate to the other. Everything derived —
       // proficiency, spell DC, slots, features — keys off these, so they must agree.
@@ -3988,12 +4035,17 @@ function renderMetamagic() {
     const opt = ALL_METAMAGIC_OPTIONS[name];
     if (!opt) return '';
     const costNum = typeof opt.cost === 'number' ? opt.cost : 1;
+    // Surprise is context-triggered (only meaningful right after a missed spell attack), not a
+    // standalone spend — show a note instead of a generic "Spend SP" button that would do nothing.
+    const action = opt.homebrew
+      ? `<div class="small-text" style="margin-top:6px;color:rgba(155,89,182,0.8);">🔀 Appears as an option automatically whenever one of your spell attacks misses.</div>`
+      : `<div style="margin-top:6px;"><button class="btn btn-purple btn-sm" onclick="spendSP(${costNum},'${name}')">Spend ${costNum} SP</button></div>`;
     return `
       <div class="metamagic-item">
-        <div class="metamagic-name">${name}</div>
+        <div class="metamagic-name">${name}${opt.homebrew?' <span class="small-text" style="color:rgba(155,89,182,0.7);">(DM-granted)</span>':''}</div>
         <div class="metamagic-cost">Cost: ${typeof opt.cost==='number'?opt.cost+' Sorcery Point'+(opt.cost>1?'s':''):opt.cost}</div>
         <div class="metamagic-desc">${opt.desc}</div>
-        <div style="margin-top:6px;"><button class="btn btn-purple btn-sm" onclick="spendSP(${costNum},'${name}')">Spend ${costNum} SP</button></div>
+        ${action}
       </div>`;
   }).join('');
 }
@@ -4228,7 +4280,7 @@ function renderMetamagicPicker() {
   if (!max) { section.style.display = 'none'; return; }
   section.style.display = '';
   if (counter) counter.textContent = `(choose ${max})`;
-  picker.innerHTML = Object.entries(ALL_METAMAGIC_OPTIONS).map(([name,opt]) => `
+  picker.innerHTML = Object.entries(ALL_METAMAGIC_OPTIONS).filter(([,opt]) => !opt.homebrew).map(([name,opt]) => `
     <label class="nc-skill-chip" style="display:inline-flex;align-items:center;gap:5px;background:rgba(8,6,3,0.7);border:1px solid rgba(201,162,39,0.25);border-radius:3px;padding:5px 9px;font-family:'Crimson Text',serif;font-size:13px;color:var(--text-dim);cursor:pointer;" title="${opt.desc}">
       <input type="checkbox" class="nc-metamagic-cb" value="${name}" onchange="onMetamagicPickChange()" style="margin:0;">
       ${name}
@@ -4770,6 +4822,7 @@ function saveCharState() {
   };
   const key = activeMeta ? charStateKey(activeMeta.id) : 'ace_char_state';
   localStorage.setItem(key, JSON.stringify(snapshot));
+  if (activeMeta) updateHighWaterMark(activeMeta.id, state.level, state.hpMax);
   pushPartyUpdate();
 }
 
@@ -5276,10 +5329,10 @@ function showD20Modal(title, subtitle, color, diceConfigs, resultLine, totalText
 // whenever the resource is available. (Tides of Chaos must be declared before the roll, so it
 // only works through the advantage pill.)
 // One screen, not two: every miss shows Close alongside whichever "use an ability to fix this"
-// buttons actually apply (Luck, Inspiration, Spell Redirect) — no separate popup stacked on top
+// buttons actually apply (Luck, Inspiration, Surprise) — no separate popup stacked on top
 // forcing a yes/no before you can even see the result.
 var _postRollReroll = null;
-// isSpell: Spell Redirect only makes sense on a missed SPELL attack ("redirect the spell to hit
+// isSpell: Surprise only makes sense on a missed SPELL attack ("redirect the spell to hit
 // someone else") — weapon attacks never offer it, so callers on that path just omit the arg.
 function postRollActions(isSpell) {
   if (!_postRollReroll) return '';
@@ -5289,7 +5342,7 @@ function postRollActions(isSpell) {
   if (state.inspiration)
     html += `<button class="cast-btn-hit" style="background:rgba(241,196,15,0.12);border-color:#f1c40f;color:#f1c40f;" onclick="usePostRollInspo()">★ Inspiration Reroll</button>`;
   if (isSpell && activeMeta?.id === LOTTO_ID && (state.sp||[]).filter(Boolean).length > 0)
-    html += `<button class="cast-btn-hit" style="background:rgba(155,89,182,0.15);border-color:#9b59b6;color:#b07cc6;" onclick="usePostRollRedirect()">🔀 Redirect Spell (${(state.sp||[]).filter(Boolean).length} SP)</button>`;
+    html += `<button class="cast-btn-hit" style="background:rgba(155,89,182,0.15);border-color:#9b59b6;color:#b07cc6;" onclick="usePostRollRedirect()">🔀 Surprise (${(state.sp||[]).filter(Boolean).length} SP)</button>`;
   return html;
 }
 function usePostRollLuck() {
@@ -5298,13 +5351,13 @@ function usePostRollLuck() {
   const f = _postRollReroll; _postRollReroll = null;
   f('🍀 Luck reroll');
 }
-// DM-granted homebrew metamagic (Lotto only, 1 SP): "When a spell misses or a target saves, I
-// can redirect the spell to hit someone else." Shows as a button right alongside Close/Luck/
-// Inspiration on the same result screen — same postRollActions() pattern as everything else.
+// DM-granted homebrew metamagic (Lotto only, 1 SP), named "Surprise": "When a spell misses or a
+// target saves, I can redirect the spell to hit someone else." Shows as a button right alongside
+// Close/Luck/Inspiration on the same result screen — same postRollActions() pattern as everything else.
 function usePostRollRedirect() {
-  if (!_postRollReroll || !spendSP(1, 'Spell Redirect')) return;
+  if (!_postRollReroll || !spendSP(1, 'Surprise')) return;
   const f = _postRollReroll; _postRollReroll = null;
-  f('🔀 Spell Redirect');
+  f('🔀 Surprise');
 }
 
 function usePostRollInspo() {
@@ -7312,7 +7365,7 @@ function buildLevelUpModal(toLv) {
   if (isSorcerer && (toLv === 10 || toLv === 17) && mmSection && mmPicker) {
     mmSection.style.display = '';
     const already = activeMeta.metamagicChoices || [];
-    const available = Object.keys(ALL_METAMAGIC_OPTIONS).filter(name => !already.includes(name));
+    const available = Object.keys(ALL_METAMAGIC_OPTIONS).filter(name => !already.includes(name) && !ALL_METAMAGIC_OPTIONS[name].homebrew);
     mmPicker.innerHTML = available.map(name => `
       <label class="nc-skill-chip" style="display:inline-flex;align-items:center;gap:5px;background:rgba(8,6,3,0.7);border:1px solid rgba(201,162,39,0.25);border-radius:3px;padding:5px 9px;font-family:'Crimson Text',serif;font-size:13px;color:var(--text-dim);cursor:pointer;" title="${ALL_METAMAGIC_OPTIONS[name].desc}">
         <input type="radio" name="lu-metamagic-pick" value="${name}" style="margin:0;">
