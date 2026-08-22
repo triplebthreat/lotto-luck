@@ -3821,6 +3821,17 @@ function maxCastableLevel(meta) {
   return maxSpellLevel(meta?.level || 1, slotTableForClass(meta?.class, meta?.ruleset));
 }
 
+// Which level a spell's level-picker dropdown should default to: the spell's own level if that
+// slot still has a charge, otherwise the lowest higher level that does (upcast automatically
+// pre-selected) — so a 1st-level spell with empty 1st but a free 2nd doesn't look uncastable.
+function firstAvailableSlotLevel(baseLevel, maxLv) {
+  for (let l = baseLevel; l <= maxLv; l++) {
+    const arr = state['slots' + SLOT_NAMES[l-1]];
+    if (arr && arr.some(Boolean)) return l;
+  }
+  return baseLevel;
+}
+
 // Consume the next available slot at a given level (1=1st, 2=2nd, etc). Returns false if none left.
 function consumeSlotAtLevel(lvlNum) {
   const ord = SLOT_NAMES[lvlNum-1];
@@ -3849,9 +3860,10 @@ function renderGenericSpells() {
 
   const renderEntry = (s) => {
     const usesSlot = s.level > 0 && hasRealSlots;
+    const defaultLv = usesSlot ? firstAvailableSlotLevel(s.level, maxLv) : s.level;
     const lvlPicker = usesSlot ? `
         <select class="spell-level-select" id="lvlsel-gs-${s.id}">
-          ${Array.from({length: Math.max(1, maxLv - s.level + 1)}, (_, i) => s.level + i).map(l => `<option value="${l}">${l===s.level ? `${l}${l===1?'st':'nd'} (base)` : `${l}${l===2?'nd':l===3?'rd':'th'} (upcast)`}</option>`).join('')}
+          ${Array.from({length: Math.max(1, maxLv - s.level + 1)}, (_, i) => s.level + i).map(l => `<option value="${l}" ${l===defaultLv?'selected':''}>${l===s.level ? `${l}${l===1?'st':'nd'} (base)` : `${l}${l===2?'nd':l===3?'rd':'th'} (upcast)`}</option>`).join('')}
         </select>` : (s.level > 0 ? `<span class="small-text" style="margin-right:6px;" title="Eldritch Knight/Arcane Trickster have a small spell slot pool not modeled here yet — track it yourself">(slot not tracked)</span>` : '');
     return `
     <div class="spell-entry">
@@ -5533,7 +5545,19 @@ function renderSlots(){
     const c1 = document.getElementById(`${panelId}-count`); if(c1) c1.textContent = `(${used}/${max})`;
     const c2 = document.getElementById(`${rbId}-count`);    if(c2) c2.textContent = `(${used}/${max})`;
   }
+  syncChaosboltLevelDefault();
   saveCharState();
+}
+// Chaos Bolt's level dropdown is static HTML (not rebuilt per-render like the generic spell
+// list), so it needs its own sync: default to the lowest level that still has a slot, so an
+// empty 1st with a free 2nd doesn't look uncastable.
+function syncChaosboltLevelDefault() {
+  const sel = document.getElementById('chaosbolt-lvl');
+  if (!sel || activeMeta?.id !== LOTTO_ID) return;
+  const maxLv = Math.min(3, maxCastableLevel(activeMeta) || 1);
+  const defaultLv = firstAvailableSlotLevel(1, maxLv);
+  const opt = sel.querySelector(`option[value="${defaultLv}"]`);
+  if (opt) sel.value = defaultLv;
 }
 
 // ══════════════════════════════════════════════════
@@ -7970,9 +7994,10 @@ function renderLottoExtraSpells() {
     const s = SPELL_LIBRARY[id];
     if (!s) return;
     const usesSlot = s.level > 0;
+    const defaultLv = usesSlot ? firstAvailableSlotLevel(s.level, maxLv) : s.level;
     const lvlPicker = usesSlot ? `
       <select class="spell-level-select" id="lvlsel-gs-${id}">
-        ${Array.from({length: Math.max(1, maxLv - s.level + 1)}, (_,i) => s.level + i).map(l => `<option value="${l}">${SLOT_NAMES[l-1]}${l===s.level?' (base)':' (upcast)'}</option>`).join('')}
+        ${Array.from({length: Math.max(1, maxLv - s.level + 1)}, (_,i) => s.level + i).map(l => `<option value="${l}" ${l===defaultLv?'selected':''}>${SLOT_NAMES[l-1]}${l===s.level?' (base)':' (upcast)'}</option>`).join('')}
       </select>` : '';
     const div = document.createElement('div');
     div.className = 'spell-entry lotto-extra-spell';
