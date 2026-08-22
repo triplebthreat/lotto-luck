@@ -3162,6 +3162,7 @@ var RACE_CONFIG = {
   'half-elf': { name:'Half-Elf',    icon:'🧑', asi:{cha:2},                                  darkvision:60, size:'Medium', speed:30, traits:['Darkvision 60ft','Fey Ancestry','Skill Versatility (+2 skill proficiencies of choice)'], languages:'Common, Elvish + 1 of choice' },
   'half-orc': { name:'Half-Orc',    icon:'💪', asi:{str:2,con:1},                            darkvision:60, size:'Medium', speed:30, traits:['Darkvision 60ft','Menacing (Intimidation prof.)','Relentless Endurance (drop to 1 HP instead of 0, 1/LR)','Savage Attacks (+1 crit die with melee weapons)'], languages:'Common, Orc' },
   aasimar:    { name:'Aasimar',     icon:'😇', asi:{cha:2,wis:1},                            darkvision:60, size:'Medium', speed:30, traits:['Darkvision 60ft','Celestial Resistance (resist necrotic & radiant)','Healing Hands (1/LR touch heal = level d4 HP)','Light Bearer (Light cantrip)'], languages:'Common, Celestial' },
+  goliath:    { name:'Goliath',     icon:'🏔️', asi:{str:2,con:1},                            darkvision:0,  size:'Medium', speed:30, traits:["Stone's Endurance (once/short rest, reaction: reduce damage taken by 1d12 + CON mod)",'Powerful Build (count as 1 size larger for carry capacity/push-drag-lift)','Mountain Born (acclimated to high altitude & cold climates)','Natural Athlete (Athletics proficiency)'], languages:'Common, Giant' },
 };
 
 // ══════════════════════════════════════════════════
@@ -8365,6 +8366,7 @@ function toggleASIOptions() {
             <option value="half-elf">Half-Elf</option>
             <option value="half-orc">Half-Orc</option>
             <option value="aasimar">Aasimar</option>
+            <option value="goliath">Goliath</option>
           </select>
         </div>
         <div class="nc-field">
