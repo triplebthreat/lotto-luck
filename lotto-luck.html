@@ -1274,7 +1274,10 @@
 
   <!-- STATS -->
   <div class="card">
-    <div class="card-title"><span class="suit">♦</span>Ability Scores</div>
+    <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;">
+      <span><span class="suit">♦</span>Ability Scores</span>
+      <button class="btn btn-sm" style="font-size:10px;padding:3px 9px;" onclick="openEditCharModal()" title="Manually edit ability scores, HP max, and spells">✎ Edit</button>
+    </div>
     <div class="stats-row">
       <div class="stat-box"><div class="stat-label">STR</div><div class="stat-score">10</div><div class="stat-mod">+0</div></div>
       <div class="stat-box"><div class="stat-label">DEX</div><div class="stat-score">14</div><div class="stat-mod">+2</div></div>
@@ -2732,6 +2735,8 @@ function openSpellPicker() {
     html += `<div class="small-text">No leveled spells available yet at this level.</div>`;
   }
   document.getElementById('spell-picker-body').innerHTML = html;
+  const manualCb = document.getElementById('spell-picker-manual-edit');
+  if (manualCb) manualCb.checked = false;
   document.getElementById('spell-picker-overlay').style.display = 'flex';
   updateSpellPickerCounts();
 }
@@ -2767,14 +2772,55 @@ function updateSpellPickerCounts() {
   if (swaps) html += ` · Swapping out: <strong style="color:${tooManySwaps?'#e05050':'#b07cc6'}">${swaps.spellsRemoved} spell${swaps.cantripsRemoved?`, ${swaps.cantripsRemoved} cantrip`:''}</strong> (max 1 each)${tooManySwaps?' — too many!':''}`;
   el.innerHTML = html;
 }
+// Manual character edit ("just in case" corrections outside the normal creation/level-up flow)
+function openEditCharModal() {
+  if (!activeMeta) return;
+  const scores = activeMeta.abilityScores || {str:10,dex:10,con:10,int:10,wis:10,cha:10};
+  document.getElementById('edit-str').value = scores.str;
+  document.getElementById('edit-dex').value = scores.dex;
+  document.getElementById('edit-con').value = scores.con;
+  document.getElementById('edit-int').value = scores.int;
+  document.getElementById('edit-wis').value = scores.wis;
+  document.getElementById('edit-cha').value = scores.cha;
+  document.getElementById('edit-hpmax').value = state.hpMax;
+  document.getElementById('edit-hp').value = state.hp;
+  document.getElementById('edit-char-overlay').style.display = 'flex';
+}
+function closeEditCharModal() { document.getElementById('edit-char-overlay').style.display = 'none'; }
+function saveEditCharModal() {
+  if (!activeMeta) return;
+  const getNum = (id, fallback) => { const v = parseInt(document.getElementById(id).value); return isNaN(v) ? fallback : v; };
+  const scores = activeMeta.abilityScores || {str:10,dex:10,con:10,int:10,wis:10,cha:10};
+  activeMeta.abilityScores = {
+    str: getNum('edit-str', scores.str), dex: getNum('edit-dex', scores.dex), con: getNum('edit-con', scores.con),
+    int: getNum('edit-int', scores.int), wis: getNum('edit-wis', scores.wis), cha: getNum('edit-cha', scores.cha),
+  };
+  const newHpMax = Math.max(1, getNum('edit-hpmax', state.hpMax));
+  const newHp = Math.max(0, Math.min(newHpMax, getNum('edit-hp', state.hp)));
+  state.hpMax = newHpMax;
+  state.hp = newHp;
+  saveActiveMeta();
+  // A manual correction is truth by definition — move the high-water mark to match (up or down)
+  // instead of only-ever-increasing, so it doesn't fight this edit on the next load.
+  localStorage.setItem(hwmKey(activeMeta.id), JSON.stringify({ level: state.level, hpMax: newHpMax }));
+  saveCharState();
+  closeEditCharModal();
+  renderAbilityScores();
+  renderSkillsAndSaves();
+  renderProfSummary();
+  updateHPDisplay();
+  applyItemBonuses();
+}
+
 function saveSpellPicks() {
   const info = casterPrepInfo(activeMeta); if (!info) return;
   const sel = spellPickerSelections();
   if (sel.cantrips.length > info.cantripMax) { alert(`Too many cantrips — max ${info.cantripMax}.`); return; }
   if (sel.spells.length > info.spellMax)     { alert(`Too many spells — max ${info.spellMax}.`); return; }
-  const swaps = swapCountsFor(info, sel);
-  if (swaps && swaps.spellsRemoved > 1) { alert(`Known casters can swap at most 1 spell per level-up — you unchecked ${swaps.spellsRemoved}. Re-check ${swaps.spellsRemoved - 1} of your previous spells and keep only 1 swap.`); return; }
-  if (swaps && swaps.cantripsRemoved > 1) { alert(`Known casters can swap at most 1 cantrip per level-up — you unchecked ${swaps.cantripsRemoved}. Re-check ${swaps.cantripsRemoved - 1} of your previous cantrips and keep only 1 swap.`); return; }
+  const manualEdit = document.getElementById('spell-picker-manual-edit')?.checked;
+  const swaps = manualEdit ? null : swapCountsFor(info, sel);
+  if (swaps && swaps.spellsRemoved > 1) { alert(`Known casters can swap at most 1 spell per level-up — you unchecked ${swaps.spellsRemoved}. Re-check ${swaps.spellsRemoved - 1} of your previous spells and keep only 1 swap, or check "Manual edit" above to override.`); return; }
+  if (swaps && swaps.cantripsRemoved > 1) { alert(`Known casters can swap at most 1 cantrip per level-up — you unchecked ${swaps.cantripsRemoved}. Re-check ${swaps.cantripsRemoved - 1} of your previous cantrips and keep only 1 swap, or check "Manual edit" above to override.`); return; }
   activeMeta.spellPicks = sel;
   saveActiveMeta();
   closeSpellPicker();
@@ -8255,12 +8301,48 @@ function toggleASIOptions() {
       <div class="small-text" id="spell-picker-sub" style="margin-top:4px;"></div>
     </div>
     <div style="flex:1;overflow-y:auto;padding:14px 20px;" id="spell-picker-body"></div>
+    <div style="padding:8px 20px 0;">
+      <label class="small-text" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="spell-picker-manual-edit"> 🔧 Manual edit (fixing a mistake — skip the "swap only 1" level-up rule this time)
+      </label>
+    </div>
     <div style="padding:12px 20px;border-top:1px solid rgba(142,68,173,0.3);display:flex;align-items:center;justify-content:space-between;gap:10px;">
       <div class="small-text" id="spell-picker-counts"></div>
       <div style="display:flex;gap:8px;">
         <button class="btn" onclick="closeSpellPicker()">Cancel</button>
         <button class="btn btn-gold" onclick="saveSpellPicks()">Save Spells</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Manual character edit: ability scores + HP max, for "just in case" corrections (typos,
+     DM adjustments, etc.) outside the normal level-up/creation flow. -->
+<div id="edit-char-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this)closeEditCharModal()">
+  <div style="background:#0f0d18;border:1px solid rgba(201,162,39,0.5);border-radius:6px;width:min(420px,94vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 0 80px rgba(0,0,0,0.9);">
+    <div style="padding:16px 20px 12px;border-bottom:1px solid rgba(201,162,39,0.3);">
+      <div style="font-family:'Cinzel Decorative',serif;font-size:16px;color:#c9a227;">✎ Manual Edit</div>
+      <div class="small-text" style="margin-top:4px;">For corrections — typos, DM adjustments, anything outside the normal flow. To edit spells, use the "Manage Spells" button on your spell list instead.</div>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:16px 20px;">
+      <div class="lu-section-title" style="color:#c9a227;margin-bottom:8px;">Ability Scores</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;">
+        <div><label class="lu-label">STR</label><input type="number" class="nc-input" id="edit-str"></div>
+        <div><label class="lu-label">DEX</label><input type="number" class="nc-input" id="edit-dex"></div>
+        <div><label class="lu-label">CON</label><input type="number" class="nc-input" id="edit-con"></div>
+        <div><label class="lu-label">INT</label><input type="number" class="nc-input" id="edit-int"></div>
+        <div><label class="lu-label">WIS</label><input type="number" class="nc-input" id="edit-wis"></div>
+        <div><label class="lu-label">CHA</label><input type="number" class="nc-input" id="edit-cha"></div>
+      </div>
+      <div class="lu-section-title" style="color:#c9a227;margin-bottom:8px;">Hit Points</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div><label class="lu-label">Max HP</label><input type="number" class="nc-input" id="edit-hpmax"></div>
+        <div><label class="lu-label">Current HP</label><input type="number" class="nc-input" id="edit-hp"></div>
+      </div>
+    </div>
+    <div style="padding:12px 20px;border-top:1px solid rgba(201,162,39,0.3);display:flex;justify-content:flex-end;gap:8px;">
+      <button class="btn" onclick="closeEditCharModal()">Cancel</button>
+      <button class="btn btn-gold" onclick="saveEditCharModal()">Save</button>
     </div>
   </div>
 </div>
