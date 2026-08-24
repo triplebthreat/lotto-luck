@@ -4166,6 +4166,7 @@ function openCharSelect() {
   const overlay = document.getElementById('char-select-overlay');
   if (!overlay) return;
   renderCharSelect();
+  updateAuthUI(fbAuth.currentUser);
   overlay.style.display = 'flex';
 }
 function closeCharSelect() {
@@ -4890,6 +4891,7 @@ function saveCharState() {
   localStorage.setItem(key, JSON.stringify(snapshot));
   if (activeMeta) updateHighWaterMark(activeMeta.id, state.level, state.hpMax);
   pushPartyUpdate();
+  if (activeMeta) syncCharacterToCloud(activeMeta, snapshot);
 }
 
 // ══════════════════════════════════════════════════
@@ -4906,10 +4908,118 @@ var partyLogListener = null, partyLogRef = null;
 var partySceneListener = null, partySceneRef = null, partySceneWasActive = false;
 
 fbAuth.signInAnonymously().catch(e => console.error('Firebase anon sign-in failed:', e));
+var cloudSyncDone = false;
 fbAuth.onAuthStateChanged(user => {
   partyUid = user ? user.uid : null;
   if (partyUid && partyCode) subscribeToParty(partyCode);
+  updateAuthUI(user);
+  if (user && !user.isAnonymous && !cloudSyncDone) {
+    cloudSyncDone = true;
+    loadCharactersFromCloud(user.uid);
+  }
 });
+
+// ══════════════════════════════════════════════════
+// ACCOUNTS — Google Sign-In, linked to the existing anonymous session so
+// party membership carries over. Anonymous play is untouched: nothing here
+// runs, and no character data reaches Firebase, until someone signs in.
+// ══════════════════════════════════════════════════
+var CLOUD_SYNC_MAP_KEY = 'dnd_cloud_sync_v1';
+function loadCloudSyncMap() { try { return JSON.parse(localStorage.getItem(CLOUD_SYNC_MAP_KEY) || '{}'); } catch(e) { return {}; } }
+function saveCloudSyncMap(m) { localStorage.setItem(CLOUD_SYNC_MAP_KEY, JSON.stringify(m)); }
+
+function updateAuthUI(user) {
+  const el = document.getElementById('auth-status');
+  if (!el) return;
+  if (user && !user.isAnonymous) {
+    const who = user.displayName || user.email || 'your Google account';
+    el.innerHTML = `Signed in as <strong style="color:#e8e0cc;">${who}</strong> · <a href="#" onclick="event.preventDefault();signOutOfGoogle()" style="color:rgba(201,162,39,0.7);">sign out</a>`;
+  } else {
+    el.innerHTML = `<a href="#" onclick="event.preventDefault();signInWithGoogle()" style="color:#c9a227;">Sign in with Google</a> to sync your characters across devices`;
+  }
+}
+
+function signInWithGoogle() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  const cur = fbAuth.currentUser;
+  const attempt = (cur && cur.isAnonymous) ? cur.linkWithPopup(provider) : fbAuth.signInWithPopup(provider);
+  attempt.then(result => {
+    partyUid = result.user.uid;
+    updateAuthUI(result.user);
+    backupLocalCharactersToCloud();
+  }).catch(err => {
+    if (err.code === 'auth/credential-already-in-use') {
+      // That Google account is already tied to a different uid (signed in elsewhere before) —
+      // sign into that existing identity instead. Local-only characters on THIS device stay in
+      // localStorage untouched; they just won't be the ones that show up from the cloud.
+      fbAuth.signInWithCredential(err.credential).then(result => {
+        partyUid = result.user.uid;
+        updateAuthUI(result.user);
+      }).catch(e2 => alert('Sign-in failed: ' + e2.message));
+    } else if (err.code !== 'auth/popup-closed-by-user') {
+      alert('Sign-in failed: ' + err.message);
+    }
+  });
+}
+
+function signOutOfGoogle() {
+  if (!confirm('Sign out? Characters stay saved on this device, but you\'ll need to sign back in to sync them elsewhere.')) return;
+  fbAuth.signOut().then(() => fbAuth.signInAnonymously());
+}
+
+// Mirrors the active character (meta + the same snapshot saveCharState() just wrote) to
+// users/{uid}/characters/{id}. No-op for anonymous sessions.
+function syncCharacterToCloud(meta, snapshot) {
+  const user = fbAuth.currentUser;
+  if (!user || user.isAnonymous || !meta) return;
+  const localTs = Date.now();
+  fbDb.ref(`users/${user.uid}/characters/${meta.id}`).set({
+    meta, state: snapshot, updatedAt: firebase.database.ServerValue.TIMESTAMP,
+  }).then(() => {
+    const m = loadCloudSyncMap(); m[meta.id] = localTs; saveCloudSyncMap(m);
+  }).catch(e => console.error('Cloud character sync failed:', e));
+}
+
+// One-time pull after sign-in: merges cloud characters into the local index/state. A character
+// this device already knows about (tracked in the sync map) only gets overwritten by a REMOTE
+// update newer than the last write this device made — so this device's own pushes never bounce
+// back and clobber a newer local edit made while offline.
+function loadCharactersFromCloud(uid) {
+  fbDb.ref(`users/${uid}/characters`).get().then(snap => {
+    const cloudChars = snap.val() || {};
+    const localIdx = loadCharsIndex();
+    const syncMap = loadCloudSyncMap();
+    let changed = false;
+    Object.values(cloudChars).forEach(rec => {
+      if (!rec || !rec.meta) return;
+      const localI = localIdx.findIndex(c => c.id === rec.meta.id);
+      const knownAt = syncMap[rec.meta.id] || 0;
+      const remoteAt = rec.updatedAt || 0;
+      if (localI !== -1 && remoteAt <= knownAt) return;
+      if (localI === -1) localIdx.push(rec.meta); else localIdx[localI] = rec.meta;
+      localStorage.setItem(charStateKey(rec.meta.id), JSON.stringify(rec.state || {}));
+      syncMap[rec.meta.id] = remoteAt;
+      changed = true;
+    });
+    if (changed) { saveCharsIndex(localIdx); saveCloudSyncMap(syncMap); renderCharSelect(); }
+  }).catch(e => console.error('Cloud character load failed:', e));
+}
+
+// Offers, once per sign-in, to back up any characters that exist locally but not in the cloud.
+function backupLocalCharactersToCloud() {
+  const user = fbAuth.currentUser;
+  if (!user || user.isAnonymous) return;
+  fbDb.ref(`users/${user.uid}/characters`).get().then(snap => {
+    const cloudIds = new Set(Object.keys(snap.val() || {}));
+    const localOnly = loadCharsIndex().filter(c => !cloudIds.has(c.id));
+    if (!localOnly.length) return;
+    if (!confirm(`Back up ${localOnly.length} character(s) on this device to your Google account?`)) return;
+    localOnly.forEach(meta => {
+      const raw = localStorage.getItem(charStateKey(meta.id));
+      if (raw) syncCharacterToCloud(meta, JSON.parse(raw));
+    });
+  });
+}
 
 function genPartyCode() {
   const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I/O to avoid confusion
@@ -8433,6 +8543,7 @@ function toggleASIOptions() {
       <div>
         <div style="font-family:'Cinzel Decorative',serif;font-size:16px;color:#c9a227;letter-spacing:1px;">Characters</div>
         <div style="font-family:'Crimson Text',serif;font-size:13px;color:rgba(201,162,39,0.5);margin-top:2px;">Select or create a character</div>
+        <div id="auth-status" style="font-family:'Crimson Text',serif;font-size:12px;color:rgba(201,162,39,0.6);margin-top:6px;"></div>
       </div>
       <button onclick="closeCharSelect()" style="background:none;border:none;color:#666;font-size:22px;cursor:pointer;padding:0 4px;line-height:1;">✕</button>
     </div>
